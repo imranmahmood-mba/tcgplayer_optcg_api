@@ -1,4 +1,5 @@
 from selenium import webdriver
+from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 import time 
@@ -69,7 +70,41 @@ def card_search(card_name, url, page_num=1):
     else:
         print('error')
 
+def retry_scrape(wait_time=12, max_attempts=3):
+    """Decorator function for retrying scrape attempts
 
+    Args:
+        attempts (int, optional): _description_. Defaults to 0.
+        wait_time (int, optional): _description_. Defaults to 12.
+        max_attempts (int, optional): _description_. Defaults to 3.
+    Raises:
+        e: TimeoutException
+        e: Catch-all
+
+    """
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            attempts = 0
+            current_wait_time = wait_time
+            while attempts < max_attempts:
+                try:
+                    return func(*args, **kwargs)
+                except TimeoutException as e:
+                    attempts += 1
+                    logging.error(f"Attempt {attempts} error in {func.__name__}: {e}")
+                    if attempts >= max_attempts:
+                        raise e
+                    else:
+                        logging.info(f"Retrying in {wait_time} seconds.")
+                        time.sleep(wait_time)
+                        current_wait_time += attempts
+                except Exception as e:
+                    logging.error(f"Error in {func.__name__}: {e}")
+                    raise e
+        return wrapper
+    return decorator
+
+@retry_scrape()
 def get_text_from_page(driver, search_page_url, **element_selectors:str):
     """Scrapes the text from a given element on a given page
 
@@ -77,45 +112,19 @@ def get_text_from_page(driver, search_page_url, **element_selectors:str):
         driver (driver): This is the driver object needed to scrape a page
         search_page_url (str): URL of page to be scraped
         element_selectors(str): Element(s) to be scrape from page
-
-    Raises:
-        e: TimeoutException
-        e: Catch-all
-
     Returns:
-        _type_: _description_
+        dict: Dictionary of scraped css elements
     """
-    attempts = 0
-    wait_time = 12
-    max_attempts = 3
     
-    while attempts < max_attempts:
-        try:
-            driver.get(search_page_url)
-            logging.info("Accessing website...")
-            
-            # wait for the page to load completely
-            wait = WebDriverWait(driver, wait_time)
-            logging.info(f"wait: {wait}")
-            # find all the elements
-            elements = {}
-            for key, selector in element_selectors.items():
-                found_elements = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, selector)))
-                elements[key] = found_elements 
-            logging.info(f"Elements from {search_page_url} successfully loaded.") 
-            logging.info(elements)          
-            return elements
-        except TimeoutException as e:
-            attempts += 1
-            logging.error(f"Attempt {attempts} error in the method download_elements_from_webpage(): {e} \n URL: {search_page_url}")
-            if attempts >= max_attempts:
-                raise e
-            else:
-                logging.info(f"Retrying in {wait_time} seconds.")
-                wait_time += attempts
-        except Exception as e:
-            logging.error(f"Error in the method download_elements_from_webpage(): {e} \n URL: {search_page_url}")
-            raise e
+    # wait for the page to load completely
+    wait = WebDriverWait(driver, 12)
+    # find all the elements
+    elements = {}
+    for key, selector in element_selectors.items():
+        found_elements = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, selector)))
+        elements[key] = found_elements 
+    logging.info(f"Elements from {search_page_url} successfully loaded.") 
+    return elements
 
 def format_api_data(json_data):
     """Helper function used to take the output from app.search_card and return formatted repsonse
@@ -141,3 +150,63 @@ def format_api_data(json_data):
             formatted_data.append(entry)
 
     return formatted_data
+
+def process_element(element: WebElement, key: str, *args: str) -> str:
+    """
+    Returns the 'href' attribute of the element if the key is specified in the arguments, 
+    otherwise returns the text of the element.
+
+    Args:
+    element (WebElement): The Selenium WebElement to process.
+    key (str): The key corresponding to the element.
+    *args (str): Additional arguments specifying when to extract 'href'.
+
+    Returns:
+    str: 'href' attribute or text of the element.
+    """
+    try:
+        href = element.get_attribute('href')
+        return href if key in args else element.text
+    except Exception as e:
+        print(f"Error processing element: {e}")
+        return ""
+    
+@retry_scrape()
+def get_all_products():        
+    try:
+        all_results = {}
+        all_results_expanded = {}
+        url = f'https://www.tcgplayer.com/search/one-piece-card-game/product?productLineName=one-piece-card-game&page=1&view=grid'
+        driver = create_driver()
+        driver.get(url)
+        while True:            
+            # scrapes each element from search results page
+            data = get_text_from_page(driver, url, 
+                                      names='.search-result__title', 
+                                      set_name='.search-result__subtitle', 
+                                link="a[data-testid^='search-result__image']")
+            print(len(data['link']))
+            for i in range(len(data['link'])):
+                key = data['names'][i].text + ' ' + data['set_name'][i].text 
+
+                print(key)
+                all_results[key] = data['link'][i].get_attribute('href')
+
+
+            all_results.append(all_results_expanded)
+
+            next_button = driver.find_elements(By.CSS_SELECTOR, '.tcg-standard-button__content')[-1]
+            next_button.click()
+
+            WebDriverWait(driver, 10).until(
+                EC.url_changes(url)
+            )           
+            url = driver.current_url
+    except Exception as e:
+        logging.info(f'Exception: {e} in {get_all_products.func_name}')
+    finally:
+        if driver:
+            driver.quit()
+        return all_results
+
+
