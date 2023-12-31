@@ -7,7 +7,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from flask.views import MethodView
-from selenium.common.exceptions import ElementClickInterceptedException
+from selenium.common.exceptions import ElementClickInterceptedException, TimeoutException
 
 # Get the absolute directory of the current script
 abs_dir = os.path.dirname(os.path.abspath(__file__))
@@ -78,6 +78,7 @@ class TCGApi(MethodView):
         card_url = request.args.get('card_url')
         if not card_url:
             return jsonify({'error': 'Card url is required'}), 400
+        
         self.driver.get(card_url)
         wait = WebDriverWait(self.driver, 10)
         sales_history_button = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, '.modal__activator')))
@@ -90,15 +91,18 @@ class TCGApi(MethodView):
                 )
                 # Click the button
                 button.click()
-                
+            # Button no longer exists, break the loop    
             except ElementClickInterceptedException:
-            # Button no longer exists, break the loop
+                break
+            except TimeoutException:
                 break
         prices = get_text_from_page(driver=self.driver, search_page_url=card_url, price='ul.is-modal li span.price', 
                                     date='ul.is-modal li span.date', condition='ul.is-modal li span.condition', 
                                     quantity='ul.is-modal li span.quantity')
         all_results.append({key: [element.text for element in elements_list] 
                             for key, elements_list in prices.items()} )        
+        if self.driver:
+                self.driver.quit()
         return jsonify(format_api_data({'results':all_results}))
 
         
